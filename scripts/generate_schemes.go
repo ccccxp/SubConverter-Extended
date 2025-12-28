@@ -64,7 +64,20 @@ func main() {
 
 	mihomoPath := strings.TrimSpace(string(output))
 	if mihomoPath == "" {
-		fmt.Printf("Error: go list returned empty path!\nStderr: %s\n", stderr.String())
+		fmt.Printf("Error: go list returned empty path! Stderr: %s\n", stderr.String())
+
+		// Fallback Debug: Get full JSON info
+		debugCmd := exec.Command("go", "list", "-m", "-json", "github.com/metacubex/mihomo")
+		debugCmd.Dir = moduleRoot
+		debugOut, _ := debugCmd.CombinedOutput()
+		fmt.Printf("Full go list JSON output:\n%s\n", string(debugOut))
+
+		// Try to fallback to GOPATH mode if we can guess it
+		if moduleRoot == "." || moduleRoot == "../bridge" {
+			// If we are in module root, maybe we can just find it?
+			// But if go list failed, probably finding it is hard.
+		}
+
 		os.Exit(1)
 	}
 

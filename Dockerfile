@@ -17,12 +17,12 @@ RUN go mod download
 # Copy Go source code
 COPY bridge/converter.go ./
 
+# Update go.sum with actual dependencies from source files
+RUN go mod tidy
+
 # Copy scripts for scheme generation
 COPY scripts/ ../scripts/
 RUN go run ../scripts/generate_schemes.go mihomo_schemes.h
-
-# Update go.sum with actual dependencies from source files
-RUN go mod tidy
 
 # Build static library (enable CGO for glibc)
 ENV CGO_ENABLED=1
