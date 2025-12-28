@@ -36,9 +36,21 @@ func main() {
 	}
 	outputPath := os.Args[1]
 
+	// Determine module root
+	moduleRoot := "."
+	if _, err := os.Stat("go.mod"); os.IsNotExist(err) {
+		// try specific known paths
+		if _, err := os.Stat("../bridge/go.mod"); err == nil {
+			moduleRoot = "../bridge"
+		} else if _, err := os.Stat("bridge/go.mod"); err == nil {
+			moduleRoot = "bridge"
+		}
+	}
+	fmt.Printf("Using module root: %s\n", moduleRoot)
+
 	// 1. Get mihomo source path
 	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/metacubex/mihomo")
-	cmd.Dir = "../bridge"
+	cmd.Dir = moduleRoot
 	output, err := cmd.Output()
 	if err != nil {
 		fmt.Printf("Error finding mihomo source: %v\n", err)
@@ -90,14 +102,13 @@ func main() {
 					continue
 				}
 
-				fmt.Printf("  Case %d: %d expressions\n", i, len(cc.List))
+				// Optional Debug: fmt.Printf("  Case %d: %d expressions\n", i, len(cc.List))
 
 				for _, expr := range cc.List {
 					switch v := expr.(type) {
 					case *ast.BasicLit:
 						if v.Kind == token.STRING {
 							val := strings.Trim(v.Value, "\"")
-							fmt.Printf("    -> Found String: %s\n", val)
 
 							if val != "http" && val != "https" {
 								if !seen[val] {
@@ -105,11 +116,7 @@ func main() {
 									seen[val] = true
 								}
 							}
-						} else {
-							fmt.Printf("    -> Found Literal (not string): %v\n", v.Kind)
 						}
-					default:
-						fmt.Printf("    -> Found Non-Literal: %T\n", v)
 					}
 				}
 			}
