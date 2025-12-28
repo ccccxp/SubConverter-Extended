@@ -774,16 +774,11 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS) {
       for (std::string &x : node_urls) {
         writeLog(0, "Fetching node data from url '" + x + "'.", LOG_LEVEL_INFO);
         if (addNodes(x, nodes, groupID, parse_set) == -1) {
-          if (global.skipFailedLinks)
-            writeLog(
-                0,
-                "The following link doesn't contain any valid node info: " + x,
-                LOG_LEVEL_WARNING);
-          else {
-            *status_code = 400;
-            return "The following link doesn't contain any valid node info: " +
-                   x;
-          }
+          // 跳过无法解析的节点链接，记录警告后继续处理其他节点
+          writeLog(0,
+                   "Skipped invalid node link: '" + x +
+                       "', continuing with other nodes.",
+                   LOG_LEVEL_WARNING);
         }
         groupID++;
       }
@@ -796,14 +791,11 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS) {
       // std::cerr<<"Fetching node data from url '"<<x<<"'."<<std::endl;
       writeLog(0, "Fetching node data from url '" + x + "'.", LOG_LEVEL_INFO);
       if (addNodes(x, nodes, groupID, parse_set) == -1) {
-        if (global.skipFailedLinks)
-          writeLog(
-              0, "The following link doesn't contain any valid node info: " + x,
-              LOG_LEVEL_WARNING);
-        else {
-          *status_code = 400;
-          return "The following link doesn't contain any valid node info: " + x;
-        }
+        // 跳过无法解析的节点链接，记录警告后继续处理其他节点
+        writeLog(0,
+                 "Skipped invalid node link: '" + x +
+                     "', continuing with other nodes.",
+                 LOG_LEVEL_WARNING);
       }
       groupID++;
     }
