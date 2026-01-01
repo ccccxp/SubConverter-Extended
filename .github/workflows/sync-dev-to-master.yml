@@ -35,7 +35,7 @@ jobs:
             echo "No changes to commit (maybe dev is already merged or only README changed)"
           else
             echo "Committing..."
-            git commit -m "chore: sync dev to master [skip ci]"
+            git commit -m "chore: sync dev to master"
             echo "Pushing..."
             git push origin master
           fi
