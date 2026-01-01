@@ -77,12 +77,9 @@ jobs:
       if: matrix.language == 'c-cpp'
       run: |
         cd bridge
-        # Initialize new go.mod dynamically
-        go mod init github.com/aethersailor/subconverter-extended/bridge
-        # Get latest Mihomo
-        go get github.com/metacubex/mihomo@Meta
-        go get -u all
-        go mod tidy
+        # Update dependencies (go.mod already exists in repo)
+        go get -u all || true
+        go mod tidy || true
         # Generate header files
         go run ../scripts/generate_schemes.go mihomo_schemes.h
         go run ../scripts/generate_param_compat.go -o param_compat.h
