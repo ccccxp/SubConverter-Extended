@@ -43,6 +43,7 @@ const std::vector<std::string> FALLBACK_CONFIG_URLS = {
 #include "utils/system.h"
 #include "utils/urlencode.h"
 #include "utils/yamlcpp_extra.h"
+#include "utils/md5/md5_interface.h"
 #include "webget.h"
 
 extern WebServer webServer;
@@ -319,6 +320,18 @@ std::string getRuleset(RESPONSE_CALLBACK_ARGS) {
 void checkExternalBase(const std::string &path, std::string &dest) {
   if (isLink(path) || (startsWith(path, global.basePath) && fileExist(path)))
     dest = path;
+}
+
+/**
+ * 根据订阅链接生成唯一特征码（MD5 前 10 位）
+ * @param url 订阅链接（会自动解码后计算哈希）
+ * @return 10 位 hex 特征码字符串
+ */
+inline std::string generateProviderHash(const std::string &url) {
+  // 确保 URL 已解码，避免编码差异导致哈希不一致
+  std::string decodedUrl = urlDecode(url);
+  std::string fullHash = getMD5(decodedUrl);
+  return fullHash.substr(0, 10);
 }
 
 std::string subconverter(RESPONSE_CALLBACK_ARGS) {
@@ -770,7 +783,13 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS) {
       // 为订阅链接创建 proxy-provider
       for (std::string &x : subscription_urls) {
         ProxyProvider provider;
-        provider.name = "provider_" + std::to_string(groupID + 1);
+        // 使用 URL 的 MD5 哈希前 10 位作为唯一特征码
+        // 这样相同的订阅链接会生成相同的 provider 名称
+        // 不同的订阅链接会生成不同的名称，触发客户端自动更新
+        std::string urlHash = generateProviderHash(x);
+        provider.name = "provider_" + urlHash;
+        writeLog(0, "Generated provider: " + provider.name + " for URL: " + x,
+                 LOG_LEVEL_INFO);
         provider.url = x;
         provider.interval = 3600; // 固定使用 3600 秒（1小时）
         provider.groupId = groupID;
