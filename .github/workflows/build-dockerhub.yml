@@ -1,4 +1,4 @@
-name: Build and push Docker image (Docker Hub)
+name: Build and Push Docker image
 
 on:
   push:
@@ -28,6 +28,7 @@ concurrency:
 
 jobs:
   prepare:
+    name: "🔧 Prepare"
     runs-on: ubuntu-latest
     # Skip if [skip ci] and ensure schedule only runs on master
     if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]') && (github.event_name != 'schedule' || github.ref == 'refs/heads/master')"
@@ -57,12 +58,19 @@ jobs:
             echo "is_release=true" >> $GITHUB_OUTPUT
             echo "Detected version from tag: $VERSION"
           elif [[ "${{ github.ref }}" == refs/heads/master ]] && ([[ "${{ github.event_name }}" == "workflow_dispatch" ]] || [[ "${{ github.event_name }}" == "schedule" ]]); then
-            # Master manual/schedule trigger: use latest tag or commit short hash as dev version if no tag
-            # If we want to treat master schedule/manual as a "release" build (generating artifacts), set is_release=true
-            VERSION="master-$(git rev-parse --short HEAD)"
+            # Master manual/schedule trigger: use latest tag as version
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -n "$LATEST_TAG" ]; then
+              VERSION="$LATEST_TAG"
+              echo "Detected latest tag: $VERSION"
+            else
+              # Fallback if no tags exist
+              VERSION="master-$(git rev-parse --short HEAD)"
+              echo "No tags found, using commit hash: $VERSION"
+            fi
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "is_release=true" >> $GITHUB_OUTPUT
-            echo "Master branch build (manual/schedule), treating as release candidate: $VERSION"
+            echo "Master branch build (manual/schedule): $VERSION"
           else
             # Dev branch: use "dev"
             echo "version=dev" >> $GITHUB_OUTPUT
@@ -81,6 +89,7 @@ jobs:
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
 
   build-amd64:
+    name: "📦 Docker + Binary (amd64)"
     runs-on: ubuntu-latest
     needs: prepare
     outputs:
@@ -215,6 +224,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=subconverter
 
   build-arm64:
+    name: "📦 Docker + Binary (arm64)"
     runs-on: ubuntu-24.04-arm
     needs: prepare
     if: needs.prepare.outputs.is_release == 'true'
@@ -301,101 +311,10 @@ jobs:
           cache-from: type=gha,scope=subconverter-arm64
           cache-to: type=gha,mode=max,scope=subconverter-arm64
 
-  build-armv7:
-    runs-on: ubuntu-24.04-arm
-    needs: prepare
-    if: needs.prepare.outputs.is_release == 'true'
-    outputs:
-      digest: ${{ steps.build_image.outputs.digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
-          fetch-depth: 0
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      
-      # Build to builder stage FIRST to extract binary
-      - name: Build to builder stage (extract binary)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          load: true
-          tags: subconverter-temp:armv7-builder
-          target: builder
-          platforms: linux/arm/v7
-          build-args: |
-            THREADS=4
-            SHA=${{ needs.prepare.outputs.sha_short }}
-            VERSION=${{ needs.prepare.outputs.version }}
-          cache-from: type=gha,scope=subconverter-armv7
-          cache-to: type=gha,mode=max,scope=subconverter-armv7
-
-      - name: Extract binaries
-        run: |
-          CONTAINER_ID=$(docker create subconverter-temp:armv7-builder)
-          docker cp $CONTAINER_ID:/src/subconverter ./subconverter
-          docker cp $CONTAINER_ID:/src/base ./base
-          docker rm $CONTAINER_ID
-          chmod +x subconverter
-
-      - name: Package Release Artifact (armv7)
-        run: |
-          mkdir -p SubConverter-Extended
-          mv subconverter SubConverter-Extended/
-          cp -r base SubConverter-Extended/
-
-          cat > SubConverter-Extended/start.sh << 'EOF'
-          #!/bin/bash
-          CONFIG_DIR="/etc/SubConverter-Extended"
-          sudo mkdir -p "$CONFIG_DIR"
-          sudo cp -n base/pref.example.toml "$CONFIG_DIR/pref.toml" 2>/dev/null || true
-          ./subconverter -f "$CONFIG_DIR/pref.toml"
-          EOF
-          chmod +x SubConverter-Extended/start.sh
-
-          tar -czf SubConverter-Extended-${{ needs.prepare.outputs.version }}-linux-armv7.tar.gz SubConverter-Extended
-
-      - name: Upload Artifact (armv7)
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-glibc-armv7
-          path: SubConverter-Extended-*.tar.gz
-
-      - name: Build and push final image
-        id: build_image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
-          platforms: linux/arm/v7
-          tags: ${{ needs.prepare.outputs.tags }}
-          build-args: |
-            THREADS=4
-            SHA=${{ needs.prepare.outputs.sha_short }}
-            VERSION=${{ needs.prepare.outputs.version }}
-          cache-from: type=gha,scope=subconverter-armv7
-          cache-to: type=gha,mode=max,scope=subconverter-armv7
-
   merge-manifest:
+    name: "🔗 Merge Manifest"
     runs-on: ubuntu-latest
-    needs: [prepare, build-amd64, build-arm64, build-armv7]
+    needs: [prepare, build-amd64, build-arm64]
     if: needs.prepare.outputs.is_release == 'true' && github.event_name != 'pull_request'
     steps:
       - name: Set up Docker Buildx
@@ -416,12 +335,12 @@ jobs:
             docker buildx imagetools create \
               -t "$TAG" \
               "${IMAGE_NAME}@${{ needs.build-amd64.outputs.digest }}" \
-              "${IMAGE_NAME}@${{ needs.build-arm64.outputs.digest }}" \
-              "${IMAGE_NAME}@${{ needs.build-armv7.outputs.digest }}"
+              "${IMAGE_NAME}@${{ needs.build-arm64.outputs.digest }}"
           done
 
   # [NEW] Alpine Build Job
   build-linux-musl:
+    name: "📦 Alpine (${{ matrix.platform.arch }})"
     runs-on: ${{ matrix.platform.runner }}
     needs: prepare
     if: needs.prepare.outputs.is_release == 'true'
@@ -434,18 +353,9 @@ jobs:
           - arch: arm64
             docker_platform: linux/arm64
             runner: ubuntu-24.04-arm
-          - arch: armv7
-            docker_platform: linux/arm/v7
-            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
-      - name: Set up QEMU (for armv7)
-        if: matrix.platform.arch == 'armv7'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -496,92 +406,11 @@ jobs:
           name: alpine-${{ matrix.platform.arch }}
           path: SubConverter-Extended-*.tar.gz
 
-  # [NEW] Windows Build Job
-  build-windows:
-    runs-on: ubuntu-latest
-    needs: prepare
-    if: needs.prepare.outputs.is_release == 'true'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set version
-        run: |
-          SHA="${{ needs.prepare.outputs.sha_short }}"
-          VERSION="${{ needs.prepare.outputs.version }}"
-          if [ -n "$SHA" ]; then
-            sed -i "s/#define BUILD_ID \"\"/#define BUILD_ID \"$SHA\"/ " src/version.h
-          fi
-          if [ -n "$VERSION" ]; then
-            sed -i "s/#define VERSION \"dev\"/#define VERSION \"$VERSION\"/" src/version.h
-          fi
-
-      - name: Cache vcpkg
-        uses: actions/cache@v4
-        with:
-          path: vcpkg
-          # Removed hashFiles('vcpkg.json') since it doesn't exist, using static key
-          key: vcpkg-mingw-static
-          restore-keys: |
-            vcpkg-mingw-static
-
-      - name: Install MinGW-w64 toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mingw-w64 cmake ninja-build
-
-      - name: Setup vcpkg
-        run: |
-          if [ ! -d "vcpkg" ]; then
-            git clone https://github.com/microsoft/vcpkg.git
-            cd vcpkg && ./bootstrap-vcpkg.sh
-          fi
-
-      - name: Install Windows dependencies
-        run: |
-          cd vcpkg
-          ./vcpkg install \
-            curl:x64-mingw-static \
-            pcre2:x64-mingw-static \
-            yaml-cpp:x64-mingw-static \
-            rapidjson:x64-mingw-static
-
-      - name: Build Windows binary
-        run: |
-          mkdir build && cd build
-          cmake -GNinja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
-            -DVCPKG_TARGET_TRIPLET=x64-mingw-static \
-            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
-            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
-            ..
-          
-          ninja -j $(nproc)
-
-      - name: Package portable version
-        run: |
-          mkdir SubConverter-Extended
-          cp build/subconverter.exe SubConverter-Extended/
-          cp -r base SubConverter-Extended/
-          
-          cat > SubConverter-Extended/README.txt << 'EOF'
-          SubConverter-Extended - Windows Portable Edition
-          Run subconverter.exe directly, config file will be auto-created.
-          EOF
-          
-          zip -r SubConverter-Extended-${{ needs.prepare.outputs.version }}-windows-portable.zip SubConverter-Extended
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-x64
-          path: SubConverter-Extended-*.zip
-
   # [NEW] Release Creation Job (Only on Tag)
   create-release:
+    name: "🚀 Release"
     runs-on: ubuntu-latest
-    needs: [prepare, build-amd64, build-arm64, build-armv7, build-linux-musl, build-windows]
+    needs: [prepare, build-amd64, build-arm64, build-linux-musl]
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
@@ -597,19 +426,13 @@ jobs:
           files: |
             artifacts/linux-glibc-*/*.tar.gz
             artifacts/alpine-*/*.tar.gz
-            artifacts/windows-x64/*.zip
           body: |
             ## 📦 Downloads
 
             ### Linux (Debian/Ubuntu - glibc)
             - **amd64**: `SubConverter-Extended-${{ needs.prepare.outputs.version }}-linux-amd64.tar.gz`
             - **arm64**: `SubConverter-Extended-${{ needs.prepare.outputs.version }}-linux-arm64.tar.gz`
-            - **armv7**: `SubConverter-Extended-${{ needs.prepare.outputs.version }}-linux-armv7.tar.gz`
 
             ### Linux (Alpine - musl)
             - **amd64**: `SubConverter-Extended-${{ needs.prepare.outputs.version }}-alpine-amd64.tar.gz`
             - **arm64**: `SubConverter-Extended-${{ needs.prepare.outputs.version }}-alpine-arm64.tar.gz`
-            - **armv7**: `SubConverter-Extended-${{ needs.prepare.outputs.version }}-alpine-armv7.tar.gz`
-
-            ### Windows (x86_64)
-            - **Portable**: `SubConverter-Extended-${{ needs.prepare.outputs.version }}-windows-portable.zip`
